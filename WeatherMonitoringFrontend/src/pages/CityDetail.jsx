@@ -16,6 +16,7 @@ import {
 import "chartjs-adapter-date-fns";
 import { useTemperatureUnit } from "../context/TemperatureUnitContext";
 
+
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -30,161 +31,215 @@ ChartJS.register(
 const CityDetail = () => {
   const { cityName } = useParams();
   const [currentWeather, setCurrentWeather] = useState(null);
-  const [dailySummary, setDailySummary] = useState(null);
   const [historicalData, setHistoricalData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const { tempUnit, toggleTemperatureUnit } = useTemperatureUnit();
+  const { tempUnit } = useTemperatureUnit();
+
 
   const convertTemperature = (temp, unit) => {
     if (unit === "Kelvin") {
-      return temp + 273.15; 
+      return temp + 273.15;
     }
     return temp;
   };
 
+ 
   useEffect(() => {
     const fetchWeatherDataFromBackend = async () => {
       setLoading(true);
-      setError(null); 
+      setError(null);
 
       try {
         const storedWeatherData = await getStoredWeatherData(cityName);
 
         if (storedWeatherData && storedWeatherData.length > 0) {
+          
           const latestData = storedWeatherData[storedWeatherData.length - 1];
           const latestReading =
             latestData.readings[latestData.readings.length - 1];
 
           setCurrentWeather({
-            temp: convertTemperature(latestReading.temp, tempUnit), 
+            temp: convertTemperature(latestReading.temp, tempUnit),
             condition: latestReading.condition,
           });
 
-          const historical = latestData.readings.map((reading) => ({
-            date: new Date(reading.timestamp),
-            temp: convertTemperature(reading.temp, tempUnit), 
+          
+          const historical = storedWeatherData.map((entry) => ({
+            date: entry.date,
+            temperatures: entry.readings.map((r) => ({
+              temp: convertTemperature(r.temp, tempUnit),
+              timestamp: r.timestamp,
+            })),
           }));
 
-          const aggregates = calculateDailyAggregates(latestData.readings, tempUnit);
-          setDailySummary(aggregates);
           setHistoricalData(historical);
         }
       } catch (error) {
-        console.error("Error fetching weather data from backend:", error);
-        setError("Failed to fetch weather data. Please try again later.");
+        setError("Error fetching weather data");
       } finally {
         setLoading(false);
       }
     };
 
     fetchWeatherDataFromBackend();
-  }, [cityName, tempUnit]); 
+  }, [cityName, tempUnit]);
 
-  const calculateDailyAggregates = (readings, unit) => {
-    if (!readings.length)
-      return { avgTemp: 0, maxTemp: 0, minTemp: 0, dominantCondition: "N/A" };
 
-    const temperatures = readings.map((entry) => convertTemperature(entry.temp, unit));
-    const conditions = readings.map((entry) => entry.condition);
+  const groupByDate = (data) => {
+    const groupedData = {};
 
-    const avgTemp = (
-      temperatures.reduce((acc, curr) => acc + curr, 0) / temperatures.length
-    ).toFixed(2);
-    const maxTemp = Math.max(...temperatures);
-    const minTemp = Math.min(...temperatures);
+    data.forEach((entry) => {
+      const date = new Date(entry.date).toLocaleDateString();
+      if (!groupedData[date]) {
+        
+        groupedData[date] = entry.temperatures[0].temp;
+      }
+    });
 
-    const dominantCondition = conditions
-      .sort(
-        (a, b) =>
-          conditions.filter((v) => v === a).length -
-          conditions.filter((v) => v === b).length
-      )
-      .pop();
-
-    return { avgTemp, maxTemp, minTemp, dominantCondition };
+    return groupedData;
   };
 
-  const chartData = {
-    labels: historicalData.map((_, index) => `Day ${index + 1}`),
-    datasets: [
-      {
-        label: `Average Temperature (${tempUnit === 'Kelvin' ? '°K' : '°C'})`,
-        data: historicalData.map((data) => data.temp),
-        borderColor: "rgba(75, 192, 192, 1)",
-        backgroundColor: "rgba(75, 192, 192, 0.2)",
-        fill: true,
-      },
-    ],
+  
+  const prepareChartData = () => {
+    if (!historicalData || historicalData.length === 0) return null;
+
+    const groupedData = groupByDate(historicalData);
+
+    const labels = Object.keys(groupedData); 
+    const data = Object.values(groupedData); 
+
+    
+    if (data.length === 1) {
+      labels.push(labels[0]);
+      data.push(data[0]);
+    }
+
+    return {
+      labels,
+      datasets: [
+        {
+          label: `Temperature (°${tempUnit === "Kelvin" ? "K" : "C"})`,
+          data,
+          borderColor: "rgba(75, 192, 192, 1)",
+          backgroundColor: "rgba(75, 192, 192, 0.2)",
+          fill: true,
+        },
+      ],
+    };
   };
+
+  const chartData = prepareChartData();
+
+  
+  const calculateDailySummary = () => {
+    if (!historicalData || historicalData.length === 0) return null;
+
+    let totalTemp = 0;
+    let maxTemp = -Infinity;
+    let minTemp = Infinity;
+    let dominantCondition = "";
+
+    historicalData.forEach((entry) => {
+      const dailyTemps = entry.temperatures;
+      if (dailyTemps.length > 0) {
+        const dailyAvg =
+          dailyTemps.reduce((acc, reading) => acc + reading.temp, 0) /
+          dailyTemps.length;
+        totalTemp += dailyAvg;
+
+        dailyTemps.forEach((tempReading) => {
+          if (tempReading.temp > maxTemp) {
+            maxTemp = tempReading.temp;
+            dominantCondition = tempReading.condition;
+          }
+          if (tempReading.temp < minTemp) {
+            minTemp = tempReading.temp;
+          }
+        });
+      }
+    });
+
+    const avgTemp = totalTemp / historicalData.length;
+
+    return {
+      avgTemp: avgTemp.toFixed(2),
+      maxTemp: maxTemp.toFixed(2),
+      minTemp: minTemp.toFixed(2),
+      dominantCondition,
+    };
+  };
+
+  const dailySummary = calculateDailySummary();
 
   return (
-    <div className="max-w-4xl mx-auto p-4">
-      <h1 className="text-3xl font-bold text-center">{cityName}</h1>
+    <div>
+      {loading ? (
+        <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+        <span className="ml-2 text-lg text-gray-700 dark:text-gray-300"></span>
+      </div>
+      ) : error ? (
+        <p>{error}</p>
+      ) : (
+        <div>
+          <h1 className="text-2xl font-bold">{cityName}</h1>
 
+          
+          {currentWeather && (
+            <div className="bg-white shadow-md rounded-lg p-6 mt-6">
+              <h2 className="text-xl font-semibold">Current Weather</h2>
+              <p className="text-lg">
+                Temperature:{" "}
+                <span className="font-bold">
+                  {currentWeather.temp.toFixed(2)} °
+                  {tempUnit === "Kelvin" ? "K" : "C"}
+                </span>
+              </p>
+              <p className="text-lg">
+                Condition:{" "}
+                <span className="font-bold">{currentWeather.condition}</span>
+              </p>
+            </div>
+          )}
 
-      {loading && <p className="text-center">Loading weather data...</p>}
-      {error && <p className="text-red-500 text-center">{error}</p>}
+         
+          {dailySummary && (
+            <div className="bg-white shadow-md rounded-lg p-6 mt-4">
+              <h2 className="text-xl font-semibold">Daily Summary</h2>
+              <p className="text-lg">
+                Average Temperature:{" "}
+                <span className="font-bold">
+                  {dailySummary.avgTemp} °{tempUnit === "Kelvin" ? "K" : "C"}
+                </span>
+              </p>
+              <p className="text-lg">
+                Maximum Temperature:{" "}
+                <span className="font-bold">
+                  {dailySummary.maxTemp} °{tempUnit === "Kelvin" ? "K" : "C"}
+                </span>
+              </p>
+              <p className="text-lg">
+                Minimum Temperature:{" "}
+                <span className="font-bold">
+                  {dailySummary.minTemp} °{tempUnit === "Kelvin" ? "K" : "C"}
+                </span>
+              </p>
+              <p className="text-lg">
+                Dominant Condition:{" "}
+                <span className="font-bold">
+                  {dailySummary.dominantCondition}
+                </span>
+              </p>
+            </div>
+          )}
 
-      {currentWeather && (
-        <div className="bg-white shadow-md rounded-lg p-6 mt-6">
-          <h2 className="text-xl font-semibold">Current Weather</h2>
-          <p className="text-lg">
-            Temperature:{" "}
-            <span className="font-bold">{currentWeather.temp.toFixed(2)} °{tempUnit === 'Kelvin' ? 'K' : 'C'}</span>
-          </p>
-          <p className="text-lg">
-            Condition:{" "}
-            <span className="font-bold">{currentWeather.condition}</span>
-          </p>
-        </div>
-      )}
-
-      {dailySummary && (
-        <div className="bg-white shadow-md rounded-lg p-6 mt-4">
-          <h2 className="text-xl font-semibold">Daily Summary</h2>
-          <p className="text-lg">
-            Average Temperature:{" "}
-            <span className="font-bold">{dailySummary.avgTemp} °{tempUnit === 'Kelvin' ? 'K' : 'C'}</span>
-          </p>
-          <p className="text-lg">
-            Maximum Temperature:{" "}
-            <span className="font-bold">{dailySummary.maxTemp} °{tempUnit === 'Kelvin' ? 'K' : 'C'}</span>
-          </p>
-          <p className="text-lg">
-            Minimum Temperature:{" "}
-            <span className="font-bold">{dailySummary.minTemp} °{tempUnit === 'Kelvin' ? 'K' : 'C'}</span>
-          </p>
-          <p className="text-lg">
-            Dominant Condition:{" "}
-            <span className="font-bold">{dailySummary.dominantCondition}</span>
-          </p>
-        </div>
-      )}
-
-      {historicalData.length > 0 && (
-        <div className="bg-white shadow-md rounded-lg p-6 mt-4">
-          <h2 className="text-xl font-semibold">Historical Temperature Data</h2>
-          <div style={{ position: "relative", height: "300px", width: "100%" }}>
-            <Line
-              data={chartData}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                  x: {
-                    type: "category",
-                  },
-                  y: {
-                    title: {
-                      display: true,
-                      text: `Temperature (°${tempUnit === 'Kelvin' ? 'K' : 'C'})`,
-                    },
-                  },
-                },
-              }}
-            />
-          </div>
+          
+          {chartData && (
+            <div className="bg-white shadow-md rounded-lg p-6 mt-4">
+              <Line data={chartData} />
+            </div>
+          )}
         </div>
       )}
     </div>
