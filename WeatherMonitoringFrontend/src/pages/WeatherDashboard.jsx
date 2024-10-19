@@ -5,6 +5,7 @@ import getStoredWeatherData from '../Services/getStoredWeatherData';
 
 const WeatherDashboard = () => {
   const [weatherData, setWeatherData] = useState([]);
+  const [loading, setLoading] = useState(true); 
   const cities = ['Delhi', 'Mumbai', 'Chennai', 'Bangalore', 'Kolkata', 'Hyderabad'];
   const navigate = useNavigate();
 
@@ -15,7 +16,6 @@ const WeatherDashboard = () => {
         const results = await Promise.all(dataPromises);
 
         const formattedData = results.map((dataEntries, index) => {
-          
           if (!dataEntries || dataEntries.length === 0) {
             return {
               city: cities[index],
@@ -41,6 +41,8 @@ const WeatherDashboard = () => {
         setWeatherData(formattedData); 
       } catch (error) {
         console.error("Error fetching weather data:", error);
+      } finally {
+        setLoading(false); 
       }
     };
 
@@ -52,15 +54,25 @@ const WeatherDashboard = () => {
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {weatherData.map((data, index) => (
-        <WeatherCard 
-          key={index} 
-          cityData={data.currentWeather} 
-          cityName={data.city} 
-          onCardClick={() => handleCardClick(data.city)}
-        />
-      ))}
+    <div className="weather-dashboard">
+      {loading ? (
+       
+        <div className="flex justify-center items-center min-h-screen">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+          <span className="ml-2 text-lg text-gray-700 dark:text-gray-300"></span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {weatherData.map((data, index) => (
+            <WeatherCard 
+              key={index} 
+              cityData={data.currentWeather} 
+              cityName={data.city} 
+              onCardClick={() => handleCardClick(data.city)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };
